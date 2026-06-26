@@ -1,0 +1,10 @@
+flowchart LR
+    A([Bạn nhận một issue]) --> B[Làm việc:<br/>tick checklist · nộp tài liệu]
+    B --> C{Kéo issue sang<br/>trạng thái mới}
+    C -->|Đã đủ điều kiện| D([Issue đi tiếp])
+    C -->|Còn thiếu| E[VietGate chặn lại<br/>và nhắc bạn cần làm gì]
+    E --> B
+
+    style D fill:#d1fae5,stroke:#065f46
+    style E fill:#fee2e2,stroke:#991b1b
+    style A fill:#e0e7ff,stroke:#3730a3

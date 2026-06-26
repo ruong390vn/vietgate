@@ -1,655 +1,341 @@
-# VietGate — Tính năng "Document Review Gate"
-## README thiết kế & triển khai (1 file duy nhất cho người + AI agent)
+# VietGate — Quality Gate cho Jira Cloud
 
-> **Đối tượng đọc:** lập trình viên và AI coding agent (Claude / Codex).
-> **Mục đích:** vừa là *tài liệu thiết kế*, vừa là *spec triển khai* cho tính năng **admin khai báo tài liệu cần nộp theo Issue Type + Status → user nộp link → giao reviewer → 4 trạng thái phê duyệt → mention → gate chặn chuyển status nếu tài liệu bắt buộc chưa duyệt** trên app VietGate hiện có.
-> **Cam kết quan trọng:** tính năng này là **cộng thêm (additive)** — **logic DOR/DOD giữ nguyên 100%** (xem §1).
-> **Phiên bản triển khai hiện tại:** `4.28.0` (production).
+VietGate là một **Forge App** chạy trên Jira Cloud, giúp đội ngũ kiểm soát chất lượng công việc theo hai cơ chế bổ trợ nhau:
+
+1. **Checklist DOR/DOD** — định nghĩa "Điều kiện sẵn sàng" (Definition of Ready) và "Điều kiện hoàn thành" (Definition of Done) cho từng loại issue, tự chèn vào mô tả issue và chặn chuyển trạng thái khi chưa đạt.
+2. **Document Review** — quản lý các tài liệu cần nộp & duyệt theo trạng thái, giao người review, theo dõi phê duyệt và chặn chuyển trạng thái khi tài liệu bắt buộc chưa được duyệt.
+
+Tài liệu này mô tả **chi tiết từng tính năng**: nó làm gì, ai dùng, hành vi ra sao trong từng tình huống. Phần kỹ thuật (file, storage, manifest…) nằm ở **Phụ lục** cuối trang dành cho lập trình viên.
+
+> **Phiên bản production hiện tại:** `4.29.0`
 
 ---
 
 ## Mục lục
 
-1. ⛔ Nguyên tắc bất biến — KHÔNG được thay đổi
-2. Bối cảnh: app VietGate hiện tại
-3. Tổng quan tính năng mới
-4. Lựa chọn kiến trúc (và lý do)
-5. Kiến trúc & vị trí file
-6. Mô hình dữ liệu
-7. Máy trạng thái & phân quyền
-8. Luồng hoạt động (sequence diagrams)
-9. Đặc tả Resolver (backend)
-10. Document Review Gate (workflow validator)
-11. Đặc tả comment + mention (ADF)
-12. Đặc tả Frontend (Custom UI) + mockup
-13. Custom Field — hiển thị luôn-thấy
-14. Thay đổi `manifest.yml`
-15. Thay đổi `src/index.js` & `package.json`
-16. Tiêu chí nghiệm thu (test checklist)
-17. Deploy & kiểm thử (Forge CLI)
-18. Tối ưu performance
-19. Ràng buộc Forge cần nhớ
-20. Tài liệu Forge tham chiếu
-21. Phạm vi & hướng mở rộng
+- [A. Bức tranh tổng thể](#a-bức-tranh-tổng-thể)
+- [B. Tính năng — Checklist DOR/DOD](#b-tính-năng--checklist-dordod)
+- [C. Tính năng — Tự chèn checklist vào mô tả issue](#c-tính-năng--tự-chèn-checklist-vào-mô-tả-issue)
+- [D. Tính năng — Cổng chặn chuyển trạng thái (Checklist Gate)](#d-tính-năng--cổng-chặn-chuyển-trạng-thái-checklist-gate)
+- [E. Tính năng — Comment tự động](#e-tính-năng--comment-tự-động)
+- [F. Tính năng — Document Review](#f-tính-năng--document-review)
+- [G. Tính năng — Document Review Gate](#g-tính-năng--document-review-gate)
+- [H. Tính năng — Bảo mật & phân quyền](#h-tính-năng--bảo-mật--phân-quyền)
+- [I. Hướng dẫn cài đặt & sử dụng](#i-hướng-dẫn-cài-đặt--sử-dụng)
+- [J. Vận hành & triển khai](#j-vận-hành--triển-khai)
+- [Phụ lục kỹ thuật](#phụ-lục-kỹ-thuật)
 
 ---
 
-## 1. ⛔ NGUYÊN TẮC BẤT BIẾN — KHÔNG ĐƯỢC THAY ĐỔI
+## A. Bức tranh tổng thể
 
-Logic DOR/DOD và toàn bộ luồng hiện tại phải **giữ nguyên hành vi**. Tính năng mới chỉ **thêm module độc lập** (custom field + workflow validator riêng + resolver riêng + storage key riêng).
+VietGate hoạt động như một **người gác cổng chất lượng** cho luồng làm việc trong Jira. Thay vì để issue trôi qua các trạng thái mà không kiểm soát, VietGate đảm bảo:
 
-### 1.1 File KHÔNG được sửa hành vi
+- Mỗi loại issue có **danh sách điều kiện rõ ràng** phải hoàn thành trước khi chuyển trạng thái.
+- Tài liệu liên quan (đặc tả, test plan, thiết kế…) được **nộp, giao đúng người review và phê duyệt** trước khi công việc đi tiếp.
+- Mọi thao tác quan trọng đều để lại **dấu vết** (comment, mention, lịch sử) để cả đội cùng nắm.
 
-| File | Vai trò (giữ nguyên) |
+Toàn bộ cấu hình nằm ở cấp **project**, do **quản trị viên project** thiết lập một lần; người dùng thường chỉ tương tác ngay trên màn hình issue.
+
+Hai nhóm tính năng (Checklist và Document Review) **độc lập nhau** — có thể bật/dùng riêng từng cái, không ràng buộc lẫn nhau.
+
+### Hình dung nhanh: VietGate đứng ở đâu trong công việc của bạn?
+
+![Tổng quan: làm đủ thì đi tiếp, thiếu thì VietGate chặn lại](docs/diagrams/01-tong-quan.png)
+
+> Nói đơn giản: **làm đủ thì đi tiếp, thiếu thì VietGate giữ lại và chỉ rõ còn thiếu gì.**
+
+---
+
+## B. Tính năng — Checklist DOR/DOD
+
+### Mục đích
+Cho phép quản trị viên định nghĩa **danh sách kiểm tra** cho mỗi loại issue, gắn với một mốc trạng thái cụ thể, để đảm bảo công việc đạt chuẩn trước khi tiến tới.
+
+### Cách cấu hình
+Vào **Project Settings → DOR / DOD Configuration**. Với mỗi cấu hình, quản trị viên chọn:
+
+- **Issue Type** áp dụng (vd: Task, Story, Bug).
+- **Chế độ cổng (gate mode):**
+  - **DOR** — chỉ kiểm soát điều kiện sẵn sàng.
+  - **DOD** — chỉ kiểm soát điều kiện hoàn thành.
+  - **Cả hai (both)** — kiểm soát đồng thời DOR và DOD.
+- **Mốc trạng thái chặn (block on transition to):** chọn trạng thái mà tại đó checklist phải hoàn thành. Mặc định DOR gắn với `In Progress`, DOD gắn với `Done`, nhưng có thể đổi tuỳ workflow.
+- **Danh sách item:** từng dòng việc cần kiểm tra. Mỗi item có thể đánh dấu **Bắt buộc (Required)** hoặc để tuỳ chọn.
+
+### Hành vi đáng chú ý
+- **Nhiều cấu hình cho một Issue Type:** một loại issue có thể có nhiều cấu hình gắn với các mốc trạng thái khác nhau (vd: một bộ điều kiện khi vào `In Progress`, một bộ khác khi vào `Done`).
+- **Ràng buộc trùng status:** hệ thống **không cho** hai cấu hình của cùng Issue Type cùng chặn một trạng thái, và trong một cấu hình thì DOR và DOD không được dùng chung một status — tránh xung đột. Nếu vi phạm, app báo lỗi rõ ràng khi lưu.
+- **Chỉ item Bắt buộc mới chặn:** item tuỳ chọn hiển thị để nhắc nhở nhưng không cản trở chuyển trạng thái. Tiến độ (%) được tính trên các item bắt buộc.
+- **Yêu cầu tối thiểu:** phải có ít nhất một item trong DOR hoặc DOD mới lưu được cấu hình, và project phải được **bật VietGate** trước khi lưu.
+
+---
+
+## C. Tính năng — Tự chèn checklist vào mô tả issue
+
+### Mục đích
+Đưa checklist đến tận nơi người dùng làm việc — ngay trong **phần Mô tả (Description)** của issue — thay vì bắt họ tìm ở một panel riêng.
+
+### Hành vi
+- Khi tạo hoặc xem issue đúng Issue Type + trạng thái có cấu hình, VietGate **tự bơm một task-list** (danh sách checkbox gốc của Jira) vào Description, dưới các tiêu đề rõ ràng:
+  - **"VietGate — Definition of Ready (DOR)"**
+  - **"VietGate — Definition of Done (DOD)"**
+- **Item bắt buộc được tô đỏ kèm dấu `*`**, và có dòng chú thích _"Lưu ý: Item màu đỏ (có dấu *) là bắt buộc."_ để người dùng phân biệt ngay.
+- Người dùng **tick trực tiếp** vào checkbox trong Description như task-list bình thường của Jira — không cần học giao diện mới.
+- App nhận diện phần checklist của mình một cách an toàn (không đụng nội dung khác trong Description) nên người dùng vẫn tự do viết mô tả phía trên/dưới.
+
+---
+
+## D. Tính năng — Cổng chặn chuyển trạng thái (Checklist Gate)
+
+### Mục đích
+Biến checklist từ "lời nhắc" thành "luật" — **chặn** việc kéo issue sang trạng thái mới nếu các điều kiện bắt buộc chưa xong.
+
+### Hành vi
+- Quản trị viên gắn **validator "VietGate DOR/DOD Checklist"** vào transition mong muốn trong cấu hình workflow của Jira.
+- Khi người dùng cố chuyển issue tới mốc trạng thái được cấu hình, VietGate kiểm tra các item **bắt buộc**:
+  - Nếu còn item chưa tick → **chặn transition** và hiện popup liệt kê các điều kiện còn thiếu, nhắc người dùng quay lại tick trong Description.
+  - Nếu đã đủ → cho phép chuyển bình thường.
+- Cổng chỉ kích hoạt ở đúng mốc trạng thái đã khai báo; các transition khác không bị ảnh hưởng.
+
+### Hành trình checklist nhìn từ người dùng
+
+![Hành trình checklist: tick trong Mô tả, kéo trạng thái, đủ thì qua thiếu thì bị chặn](docs/diagrams/02-checklist.png)
+
+---
+
+## E. Tính năng — Comment tự động
+
+VietGate chủ động để lại comment trên issue ở những thời điểm quan trọng, giúp cả đội theo dõi mà không cần ai phải gõ tay.
+
+### E.1 Cảnh báo rời cổng khi chưa hoàn thành
+Nếu một issue **rời khỏi** trạng thái cổng mà điều kiện bắt buộc vẫn chưa xong (ví dụ transition không gắn validator, hoặc bị chuyển bằng cách khác), VietGate đăng một comment cảnh báo nêu rõ những item còn thiếu. Đây là **lớp bảo vệ dự phòng** cho trường hợp validator chưa được gắn. App có cơ chế tránh đăng trùng comment cho cùng một lần chuyển trạng thái.
+
+### E.2 Báo cáo hoàn thành
+Khi issue đạt tới trạng thái kết thúc (vd: `Done`, `Closed`, `Resolved`), VietGate có thể tổng hợp tình hình checklist (đã tick bao nhiêu / tổng số item bắt buộc) thành một comment báo cáo, kèm tên người thực hiện — phục vụ truy vết và đối soát.
+
+---
+
+## F. Tính năng — Document Review
+
+> **Triết lý thiết kế:** Link tài liệu là **sản phẩm do người làm việc tạo ra**, không thể biết trước. Vì vậy VietGate tách rõ hai vai: **quản trị viên khai báo "cần nộp tài liệu gì"**, còn **người dùng nộp link thật ngay trên issue**.
+
+### F.1 Quản trị viên khai báo "ô tài liệu" (slot)
+Tại **Project Settings → DOR / DOD Configuration → "Tài liệu cần nộp theo Status"**, quản trị viên tạo các **ô tài liệu**:
+
+- Mỗi ô chỉ cần **tên tài liệu** (vd: URD, Test Plan, Tài liệu thiết kế API) — **không nhập URL**.
+- Mỗi ô gắn với **Issue Type + Status** cụ thể: chỉ hiện khi issue ở đúng loại và đúng trạng thái đó.
+- Có thể đánh dấu ô là **Bắt buộc** (sẽ tham gia chặn chuyển trạng thái — xem mục G).
+- Hỗ trợ **thêm nhiều ô cùng lúc** cho cùng một Issue Type + Status và lưu một lần.
+
+### F.2 Trường "Document Review" luôn hiển thị trên issue
+VietGate cung cấp một **trường tuỳ biến (custom field)** tên "VietGate Document Review". Khác với panel ẩn trong menu Apps, trường này **luôn hiển thị** trong khu vực thông tin issue mà người dùng **không phải bấm gì** — nhìn vào là thấy ngay:
+
+- Thanh tiến độ tổng quan: _"X/Y đã duyệt"_, số tài liệu bị từ chối, trạng thái hiện tại.
+- Danh sách tài liệu, mỗi dòng kèm biểu tượng trạng thái và tên người liên quan.
+
+Để **thao tác** (nộp link, giao review, duyệt…), người dùng bấm nút chỉnh sửa ✏️ trên trường để mở giao diện đầy đủ.
+
+### F.3 Người dùng nộp link tài liệu
+- Tài liệu chưa có link nằm trong nhóm **"📎 Chưa nộp link"**.
+- Người dùng **dán URL** (bắt buộc bắt đầu bằng `http://` hoặc `https://`) rồi bấm **"📎 Nộp link"**.
+- Sau khi nộp, người đã nộp có thể **"✏️ Đổi link"** chừng nào tài liệu chưa được duyệt. Nếu đổi link lúc đang được review, tài liệu tự quay về trạng thái chờ để review lại từ đầu.
+- Chỉ **người đã nộp** mới được đổi link của mình.
+
+### F.4 Giao người review & thông báo
+- Sau khi có link, người dùng **chọn người review** bằng ô tìm kiếm (gõ tên/email, có gợi ý danh sách).
+- Khi giao, VietGate **đăng comment @mention** người review để Jira gửi thông báo (chuông + email) — đảm bảo họ biết việc.
+- **Không thể giao review khi chưa có link** — app sẽ nhắc nộp link trước.
+- Nếu đã có người review, chỉ **người giao đầu tiên (chủ)** mới được đổi sang người khác.
+
+### F.5 Bốn trạng thái phê duyệt
+Mỗi tài liệu đi qua các trạng thái:
+
+| Trạng thái | Ý nghĩa |
 |---|---|
-| `src/engine.js` | Logic checklist DOR/DOD, normalize config, tính progress |
-| `src/description.js` | Bơm/parse task-list ADF trong Description |
-| `src/workflow.js` | Workflow validator chặn transition (checklist DOR/DOD) |
-| `src/gateLeaveCheck.js` | Đánh giá vi phạm khi rời gate status (checklist) |
-| `src/gateVisibility.js` | Lọc hiển thị gate theo status |
-| `src/completionComment.js` | Comment báo cáo hoàn thành |
-| `src/transitionWarning.js` | Comment cảnh báo rời gate |
-| `src/triggers.js` | Trigger issue created/updated |
-| `src/instance.js` | Dựng instance runtime |
-| `src/metadata.js`, `src/projectMeta.js` | Metadata project / issue type / status |
-| `src/uimRegistry.js`, `src/checklistPreview.js` | Đăng ký UIM + preview checklist |
-| `static/uim/**` | Injector Description |
+| 📎 Chưa nộp link | Ô tài liệu tồn tại nhưng chưa có URL |
+| ⏳ Chờ review | Đã nộp link / vừa giao / vừa gửi lại, đang chờ người review |
+| 🔍 Đang review | Người review đang xem |
+| ✅ Đã duyệt | Tài liệu hợp lệ |
+| ⛔ Từ chối | Người review từ chối kèm lý do; cần làm lại |
 
-### 1.2 Manifest — module KHÔNG được đụng
+### F.6 Quy trình duyệt & vòng làm lại (rework)
+- **Chỉ người được giao review** mới được đổi trạng thái tài liệu.
+- Khi **từ chối**, người review **bắt buộc nhập lý do**; VietGate mention lại **người giao review** kèm lý do để họ biết phải sửa gì.
+- Người giao bấm **"Gửi lại để review"** sau khi chỉnh sửa → tài liệu trở lại trạng thái chờ, **đếm vòng tăng lên** (Vòng #2, #3…) và người review được mention lại.
+- Mọi bước (nộp, giao, duyệt, từ chối, gửi lại) đều được lưu vào **lịch sử** của tài liệu (giới hạn các mục gần nhất).
 
-Giữ nguyên: `jira:uiModifications`, `jira:projectSettingsPage`, workflow validator **checklist** (`compliance-gate-validator`), cả 2 `trigger`, và các `function` checklist hiện có. Tính năng Document Review **chỉ THÊM**:
-- `jira:customFieldType` (`vietgate-doc-review`)
-- `jira:workflowValidator` (`doc-review-gate-validator`)
-- `function`: `doc-field-value` (→ `docField.value`) và `validate-doc-gate` (→ `docWorkflow.validator`)
-- `resource`: `doc-review-ui`
+### Vòng đời một tài liệu (dễ hình dung)
 
-### 1.3 File dùng chung — chỉ THÊM, không sửa
+![Vòng đời tài liệu: Chưa nộp link, Chờ review, Đang review, Đã duyệt hoặc Từ chối rồi gửi lại](docs/diagrams/03-vong-doi-tai-lieu.png)
 
-- `src/index.js`: chỉ thêm 1 import + 1 lời gọi `registerDocReviewResolvers(resolver)`. Không sửa/xoá `resolver.define(...)` sẵn có.
-- `static/admin/src/App.js`: chỉ **thêm section** "Tài liệu cần nộp theo Status" (không đổi logic DOR/DOD).
-- `package.json` (root): **không** thêm `@forge/react` / `react` ở root (tránh xung đột với Custom UI).
-- `permissions.scopes`: **không thêm scope mới** (đã đủ).
+> Ai làm gì ở mỗi bước:
+> - **Người làm việc:** nộp link → giao người review → (nếu bị từ chối) sửa & gửi lại.
+> - **Người review:** xem tài liệu → bấm Duyệt hoặc Từ chối (kèm lý do).
 
-> ✅ Tiêu chí: một issue đang dùng DOR/DOD phải chạy **y hệt như trước**, chỉ xuất hiện thêm custom field "VietGate Document Review".
+### F.7 Giao diện gọn khi nhiều tài liệu
+Giao diện chỉnh sửa trình bày theo dạng **accordion**: mỗi tài liệu là một dòng gọn (chấm màu trạng thái + tên + nhãn "Bắt buộc" + badge). Bấm vào dòng mới bung ra chi tiết và các nút thao tác; **chỉ một dòng mở tại một thời điểm** nên dù có nhiều tài liệu, khung vẫn gọn gàng. Các tài liệu được nhóm theo trạng thái: Chưa nộp link → Từ chối → Cần xử lý → Đang review → Đã duyệt.
 
 ---
 
-## 2. Bối cảnh: app VietGate hiện tại
+## G. Tính năng — Document Review Gate
 
-VietGate là Forge App (Jira Cloud) quản lý **checklist DOR/DOD** (Definition of Ready / Definition of Done) như một *Quality Gate*:
+### Mục đích
+Tương tự Checklist Gate nhưng dành cho tài liệu: **chặn chuyển trạng thái** nếu còn tài liệu **bắt buộc** chưa được duyệt.
 
-| Thành phần | Module Forge | Vai trò |
-|---|---|---|
-| Cấu hình DOR/DOD | `jira:projectSettingsPage` (Custom UI – React) | Admin định nghĩa checklist theo Issue Type + status |
-| Chèn checklist vào Description | `jira:uiModifications` (UIM) | Bơm task-list vào Description khi tạo/xem issue |
-| Chặn chuyển status | `jira:workflowValidator` | Chặn transition nếu item bắt buộc chưa tick |
-| Tự động hoá | `trigger` (issue created/updated) | Comment cảnh báo / báo cáo hoàn thành |
-| Lưu trữ | Forge Storage (`storage:app`) | Lưu config + instance theo project/issue |
+### Hành vi
+- Quản trị viên gắn **validator "VietGate Document Review Gate"** vào transition mong muốn.
+- Khi người dùng rời một trạng thái, VietGate kiểm tra các ô tài liệu **bắt buộc** gắn với trạng thái đó:
+  - Còn tài liệu **chưa nộp link** hoặc **chưa được duyệt** → **chặn** và hiện thông báo nêu rõ tài liệu nào còn thiếu (ghi rõ "Chưa nộp link" hay đang ở trạng thái nào).
+  - Tất cả đã duyệt → cho phép chuyển.
+- **An toàn khi lỗi:** nếu vì lý do nào đó không đọc được dữ liệu, validator **không chặn nhầm** công việc (ưu tiên không cản trở luồng làm việc).
+- Cổng chỉ hoạt động khi quản trị viên gắn validator; nếu không gắn, tài liệu vẫn review bình thường nhưng không chặn transition.
 
-**Hạ tầng tái dùng được:** app đã có `@forge/resolver`, scope `read/write:jira-work`, `read:jira-user`, `storage:app`, và pattern đăng comment ADF. → Tính năng mới **không cần thêm scope**.
+### Khi bạn kéo issue sang trạng thái mới
 
----
+![Cổng tài liệu: còn tài liệu bắt buộc chưa duyệt thì chặn chuyển trạng thái](docs/diagrams/04-doc-gate.png)
 
-## 3. Tổng quan tính năng mới
-
-> **Đổi mô hình quan trọng (v4.29 dev / 4.28 prod):** Trước đây admin dán sẵn URL tài liệu — **sai logic**, vì link là *sản phẩm user làm ra*, không thể biết trước. Mô hình mới tách 2 lớp: **admin khai báo YÊU CẦU tài liệu (slot)**, còn **user nộp LINK thật trên từng issue**.
-
-### 3.1 Admin cấu hình (Project Settings)
-
-Tại **Project Settings → DOR / DOD Configuration → "Tài liệu cần nộp theo Status"**, admin khai báo các **ô tài liệu (slot)**:
-
-- Mỗi slot gồm **tên tài liệu** (vd: URD, Test Plan, Tài liệu thiết kế API) + cờ **Bắt buộc** — **KHÔNG nhập URL**.
-- Mỗi slot gắn với **Issue Type + Status** cụ thể.
-- Có thể nhập **nhiều slot cùng lúc** cho cùng Issue Type + Status (lưu 1 lần).
-
-### 3.2 Trên issue
-
-1. Custom field **"VietGate Document Review"** hiển thị **luôn** trong khu vực Details (read view, 0 click).
-2. Khi issue ở đúng Issue Type + Status → các slot hiện ra. Slot chưa có link nằm ở nhóm **"📎 Chưa nộp link"**.
-3. **User nộp link**: dán URL vào ô → bấm "📎 Nộp link". Người đã nộp có thể **"✏️ Đổi link"** khi chưa duyệt.
-4. **Giao reviewer** (chỉ khi đã có link): app đăng comment **@mention** để Jira gửi thông báo.
-5. **4 trạng thái**: `pending` → `in_review` → `approved`, hoặc `rejected` (từ chối – cần làm lại).
-6. **Chỉ reviewer** đổi được trạng thái; khi **từ chối** phải nhập **lý do** và app mention lại **người giao review**; người giao bấm **"Gửi lại để review"** (vòng rework).
-7. **Gate**: slot **Bắt buộc** chặn chuyển status nếu **chưa nộp link** hoặc **chưa được duyệt** (xem §10).
-
-Kết quả: nhìn field là biết tài liệu nào chưa nộp / đang chờ / đã duyệt / bị từ chối, ai chịu trách nhiệm — không cần mở panel ẩn trong Apps.
+> Tài liệu **tuỳ chọn** (không đánh dấu Bắt buộc) không bao giờ cản trở bạn — chỉ tài liệu **Bắt buộc** mới tham gia chặn cổng.
 
 ---
 
-## 4. Lựa chọn kiến trúc (và lý do)
+## H. Tính năng — Bảo mật & phân quyền
 
-### 4.1 Vì sao KHÔNG dùng issuePanel / issueContext / issueGlance?
+VietGate thực thi phân quyền ở **tầng backend**, không tin tưởng việc "giao diện chỉ hiện cho admin".
 
-| Phương án | Đánh giá |
-|---|---|
-| `jira:issuePanel` | ❌ Ẩn trong menu Apps; auto-expand qua issue property **không đáng tin**. |
-| `jira:issueContext` | ❌ Nằm sidebar phải, dưới Automation; vẫn phải bấm để mở. |
-| `jira:issueGlance` | ❌ Chip trên đầu nhưng nội dung trong flyout — vẫn phải bấm. |
-| UI Kit `@forge/react` (native) | ❌ Xung đột React với Custom UI admin/uim → crash `useState` null. |
-
-### 4.2 Giải pháp đã chọn: `jira:customFieldType` (object)
-
-| Thành phần | Công nghệ | Vai trò |
-|---|---|---|
-| **View (read)** | Value function + formatter expression | Hiển thị **luôn** trong Details, **0 click**, không dùng React |
-| **Edit (thao tác)** | Custom UI (`static/doc-review/`) | Nộp link, giao reviewer, duyệt, từ chối, mention — bấm ✏️ trên field |
-| **Backend** | `src/docReview.js` + `src/docField.js` | Resolver + value function |
-| **Gate** | `jira:workflowValidator` + `src/docWorkflow.js` | Chặn transition khi tài liệu bắt buộc chưa duyệt |
-
-**Lý do:** Custom field là cơ chế **duy nhất** trên Forge/Jira cho phép nội dung app **luôn hiển thị** trong issue view mà không cần thao tác mở panel.
-
-> **Giới hạn 1 field:** Forge chỉ cho app khai báo **một** custom field tĩnh trong manifest — **không thể tạo động nhiều field Jira riêng** cho từng tài liệu rồi gán screen khác nhau. Việc "tài liệu xuất hiện ở screen nào để user nhập" được giải quyết bằng cách **admin gắn field `Document Review` vào screen mong muốn** (Project Settings → Screens) — đó là cấu hình Jira gốc, app không cần code thêm. Còn *slot xuất hiện khi nào* thì điều khiển bằng **Status**.
-
-### 4.3 Lưu trữ & mention
-
-- **Forge Key-Value Storage**, gọi qua `.asApp()` ở backend.
-- Key `doc_tpl_<projectId>` → **slot** tài liệu theo Issue Type + Status (admin khai báo).
-- Key `doc_review_<issueId>` → trạng thái review **và URL user nộp** cho từng slot trên issue.
-- **Mention/notify:** comment ADF mention node (Jira tự gửi chuông + email).
-- **User search:** đi qua resolver backend `docReview.searchUsers` (`.asApp()`) cho ổn định trong ngữ cảnh custom field edit (frontend `requestJira` hay bị chặn).
+- **Thao tác cấu hình** (tạo/sửa/xoá cấu hình DOR/DOD, khai báo ô tài liệu, bật/tắt VietGate, đọc danh sách issue type/status) đều **yêu cầu quyền quản trị project**. Người gọi phải có quyền *Quản trị project* hoặc *Quản trị site*; nếu không sẽ bị từ chối với thông báo rõ ràng.
+- **Thao tác trên issue** (nộp link, giao review, duyệt/từ chối, gửi lại) tuân theo **luật vai trò**: người nộp đổi link của mình, chủ giao/đổi người review, chỉ người review đổi trạng thái, chỉ chủ gửi lại. Mọi kiểm tra này nằm ở backend — giao diện chỉ ẩn/hiện nút cho tiện.
+- **Chỉ chấp nhận URL `http(s)://`** ở cả ô nhập link lẫn link trong comment — chặn các scheme nguy hiểm.
+- **Không lộ chi tiết lỗi nội bộ** ra người dùng: lỗi gọi API được ghi log phía máy chủ, còn người dùng chỉ thấy thông báo chung, lịch sự.
+- **Tối thiểu quyền:** app không yêu cầu thêm phạm vi (scope) ngoài những gì cần thiết.
 
 ---
 
-## 5. Kiến trúc & vị trí file
+## I. Hướng dẫn cài đặt & sử dụng
 
-```
-manifest.yml                      (+customFieldType, +workflowValidator doc-review-gate, +2 function, +resource)
-package.json                      (root: KHÔNG có @forge/react; build:ui gồm doc-review)
-src/
-  index.js                        (sửa: +import & +register doc-review resolvers)
-  docReview.js                    (resolver + helper + value function + gate logic)
-  docField.js                     (handler value function cho custom field)
-  docWorkflow.js                  (handler workflow validator — Document Review Gate)
-static/
-  admin/src/App.js                (sửa: +section "Tài liệu cần nộp theo Status")
-  doc-review/                     (Custom UI — edit field)
-    package.json
-    public/index.html
-    src/
-      index.js
-      App.js                      (UI nộp link / giao reviewer / duyệt / từ chối — accordion)
-      styles.css
-```
+### Ai làm gì?
 
-- Resolver dùng chung `engine-resolver` → `index.handler`.
-- Custom field `resolver` khai báo ở **cấp module** (không đặt trong `edit`).
-- Ngữ cảnh resolver: `req.context.extension.issue.id`, `req.context.accountId`.
-- Ngữ cảnh Custom UI edit: `view.getContext()` → `extension.issue`, `extension.type === 'jira:customFieldType'`.
+![Ai làm gì: Quản trị viên thiết lập, Người dùng nộp và giao review, Người review duyệt](docs/diagrams/05-ai-lam-gi.png)
+
+### Dành cho quản trị viên (thiết lập một lần)
+
+1. **Bật VietGate** cho project trong **Project Settings → DOR / DOD Configuration**.
+2. **Tạo cấu hình checklist** cho các Issue Type cần kiểm soát (chọn gate mode, mốc trạng thái, thêm item, đánh dấu bắt buộc).
+3. **Khai báo ô tài liệu** (nếu dùng Document Review) ở mục "Tài liệu cần nộp theo Status".
+4. **Tạo & gắn trường "VietGate Document Review"** vào màn hình (screen) của project:
+   - Vào **Settings → Issues → Custom fields → Create custom field**, chọn loại **VietGate Document Review**, đặt tên, tạo.
+   - Gắn trường vào các **screen** mong muốn và kéo lên vị trí dễ thấy.
+   - *(Lưu ý: app chỉ cung cấp một trường này; việc nó xuất hiện ở màn hình nào do bạn gắn qua cấu hình screen của Jira.)*
+5. **Gắn validator vào workflow** (nếu muốn chặn chuyển trạng thái):
+   - "VietGate DOR/DOD Checklist" cho cổng checklist.
+   - "VietGate Document Review Gate" cho cổng tài liệu.
+
+### Dành cho người dùng (hằng ngày)
+
+- **Checklist:** mở issue → tick các item trong phần Mô tả. Khi chuyển trạng thái, nếu còn thiếu item bắt buộc sẽ bị chặn kèm nhắc nhở.
+- **Document Review:** nhìn trường "Document Review" để biết tình hình → bấm ✏️ để nộp link, giao người review, hoặc duyệt/từ chối (tuỳ vai trò của bạn).
 
 ---
 
-## 6. Mô hình dữ liệu
+## J. Vận hành & triển khai
 
-### 6.1 Slot tài liệu (admin) — `doc_tpl_<projectId>`
-
-```jsonc
-{
-  "templates": [
-    {
-      "id": "tpl_<timestamp>_<rand>",
-      "issueType": "Task",
-      "status": "In Progress",
-      "title": "Tài liệu thiết kế API",   // BẮT BUỘC có tên
-      "required": true,                    // true = chặn chuyển status nếu chưa duyệt
-      "url": "https://..."                 // (tuỳ chọn) chỉ tồn tại với DỮ LIỆU CŨ; mô hình mới KHÔNG nhập URL
-    }
-  ]
-}
-```
-
-- Admin CRUD qua resolver `docTemplate.list` / `docTemplate.save` / `docTemplate.saveMany` / `docTemplate.delete`.
-- `url` chỉ là **fallback tương thích ngược**: slot cũ đã có URL được coi như "đã nộp sẵn", user vẫn ghi đè được.
-
-### 6.2 Trạng thái review + link user nộp (theo issue) — `doc_review_<issueId>`
-
-```jsonc
-{
-  "reviews": {
-    "tpl_<id>": {
-      "url": "https://...",            // LINK do USER nộp (nguồn chính)
-      "submittedById": "<accountId>",  // người nộp link
-      "submittedByName": "Le Van C",
-      "submittedAt": "ISO-8601",
-      "status": "pending",             // pending | in_review | approved | rejected
-      "reviewerId": "<accountId>",
-      "reviewerName": "Nguyen Van A",
-      "addedById": "<accountId>",      // người giao review (owner)
-      "addedByName": "Tran Thi B",
-      "rejectReason": "",
-      "round": 1,
-      "updatedAt": "ISO-8601",
-      "history": [
-        { "status": "pending", "byId": "...", "byName": "...", "at": "ISO", "reason": "", "note": "Nộp link tài liệu" }
-      ]
-    }
-  }
-}
-```
-
-> Slot **chưa được nộp** thì **không** có entry (hoặc entry chưa có `url`). URL hiệu lực = `review.url || template.url`.
-
-### 6.3 Giá trị custom field (object) — tính bởi value function
-
-```jsonc
-{
-  "text": "📋 Review tài liệu   ▰▱▱▱▱  0/2 đã duyệt\n\n📎 Test Plan  •  Chưa nộp link  🔴 bắt buộc\n⏳ Spec API  •  Chờ review · Nguyen Van A",
-  "count": 2,
-  "approved": 0
-}
-```
-
-- **CHỈ** trả về `text`, `count`, `approved` (đúng `schema`). Thêm thuộc tính lạ (vd. `items`) → Jira loại bỏ cả giá trị → field rỗng.
-- Slot chưa nộp link hiển thị dòng `📎 … • Chưa nộp link` và được đẩy lên đầu.
-- Trả về `null` nếu Issue Type + Status hiện tại **không có** slot → field để trống.
-
-### 6.4 Enum trạng thái
-
-| `status` | Nhãn hiển thị | Icon | Ý nghĩa |
-|---|---|---|---|
-| *(chưa nộp)* | Chưa nộp link | 📎 | Slot tồn tại nhưng user chưa dán URL |
-| `pending` | Chờ review | ⏳ | Đã nộp link, vừa giao / vừa gửi lại, chờ reviewer |
-| `in_review` | Đang review | 🔍 | Reviewer đang xem |
-| `approved` | Đã duyệt | ✅ | Tài liệu hợp lệ |
-| `rejected` | Từ chối | ⛔ | Reviewer từ chối kèm lý do; chờ làm lại |
-
----
-
-## 7. Máy trạng thái & phân quyền (chốt ở BACKEND)
-
-```mermaid
-stateDiagram-v2
-    [*] --> unsubmitted: Admin khai báo slot
-    unsubmitted --> pending: User nộp link
-    pending --> in_review: Reviewer bắt đầu xem
-    pending --> approved: Reviewer duyệt nhanh
-    pending --> rejected: Reviewer từ chối (kèm lý do)
-    in_review --> approved: Reviewer duyệt
-    in_review --> rejected: Reviewer từ chối (kèm lý do)
-    rejected --> pending: Owner gửi lại (round+1)
-    approved --> [*]
-    note right of unsubmitted
-        Giao reviewer chỉ khả dụng
-        SAU khi đã nộp link
-    end note
-```
-
-| Hành động | accountId được phép | Điều kiện |
-|---|---|---|
-| Nộp / đổi link (`submitLink`) | bất kỳ user xem được issue | Người đã nộp (`submittedById`) mới được đổi; không đổi khi đã `approved` |
-| Giao / giao lại reviewer (`assign`) | bất kỳ user (owner mới giao lại) | **Phải đã có link**; owner (`addedById`) mới được giao lại |
-| `* → in_review` / `approved` / `rejected` (`setStatus`) | `review.reviewerId` | `rejected` cần `reason` không rỗng |
-| `rejected → pending` (`resubmit`) | `review.addedById` (owner) | `round += 1` |
-
-> Mọi kiểm tra quyền **bắt buộc trong resolver**. UI chỉ ẩn/hiện nút — không phải lớp bảo vệ.
-> Đổi link khi đang `in_review` → tự đưa về `pending` để review lại từ đầu.
-
----
-
-## 8. Luồng hoạt động
-
-### 8.1 Xem issue — field tự hiện (0 click)
-
-```mermaid
-sequenceDiagram
-    actor User
-    participant Jira as Jira Issue View
-    participant ValueFn as doc-field-value
-    participant DocReview as docReview.js
-    participant Storage as Forge Storage
-
-    User->>Jira: Mở issue
-    Jira->>ValueFn: Gọi value function (issue id)
-    ValueFn->>DocReview: computeIssueDocSummaries([issueId])
-    DocReview->>Jira: bulkfetch issue context (project, type, status)
-    DocReview->>Storage: Đọc doc_tpl_<projectId>
-    alt Có slot khớp status
-        DocReview->>Storage: Đọc doc_review_<issueId>
-        DocReview-->>ValueFn: { text, count, approved }
-        ValueFn-->>Jira: Giá trị field
-        Jira-->>User: Hiển thị ngay trong Details
-    else Không có slot
-        ValueFn-->>Jira: null (field trống)
-    end
-```
-
-### 8.2 User nộp link → giao reviewer + mention
-
-```mermaid
-sequenceDiagram
-    actor Owner as User (người nộp)
-    participant Edit as Custom UI (doc-review)
-    participant Resolver as Forge Resolver
-    participant Storage as Forge Storage
-    participant Jira as Jira Comment API
-    actor Reviewer
-
-    Owner->>Edit: Bấm ✏️ field → dán URL → Nộp link
-    Edit->>Resolver: invoke('docReview.submitLink', {templateId, url})
-    Resolver->>Storage: Lưu review.url + submittedBy (status=pending)
-    Owner->>Edit: Chọn reviewer → Giao review
-    Edit->>Resolver: invoke('docReview.assign', {templateId, reviewerId})
-    Resolver->>Storage: Lưu reviewer (status=pending, round=1)
-    Resolver->>Jira: Comment @mention reviewer (kèm link)
-    Jira-->>Reviewer: Thông báo
-    Owner->>Edit: Bấm Đóng → view.submit(null)
-    Note over Jira: Value function tính lại → read view cập nhật
-```
-
-### 8.3 Từ chối → gửi lại (vòng rework)
-
-Reviewer `setStatus(rejected, reason)` → mention owner; owner `resubmit` → mention reviewer, `round+1`.
-
----
-
-## 9. Đặc tả Resolver (`src/docReview.js`)
-
-Export `registerDocReviewResolvers(resolver)` — gọi trong `index.js`.
-
-### 9.1 Admin — quản lý slot tài liệu
-
-| Resolver | Payload | Trả về |
-|---|---|---|
-| `docTemplate.list` | — | `{ templates }` |
-| `docTemplate.save` | `{ id?, issueType, status, title, required, url? }` | `{ templates }` |
-| `docTemplate.saveMany` | `{ issueType, status, links: [{ title, required, url? }] }` | `{ templates, added }` |
-| `docTemplate.delete` | `{ id }` | `{ templates }` |
-
-> `save` / `saveMany` yêu cầu **title** (tên slot). `url` tuỳ chọn, chỉ validate nếu được truyền vào (tương thích dữ liệu cũ).
-
-### 9.2 Edit — nộp link & review theo issue
-
-| Resolver | Payload | Hành vi chính |
-|---|---|---|
-| `docReview.searchUsers` | `{ query?, maxResults? }` | Tìm/preload user (`.asApp()`); lọc `accountType=atlassian`, active |
-| `docReview.panel` | — | Ghép slot (theo status) + review state → `{ items, currentUserId, currentStatus }` |
-| `docReview.submitLink` | `{ templateId, url }` | User nộp/đổi link; nếu có reviewer → mention báo link mới |
-| `docReview.assign` | `{ templateId, reviewerId }` | Giao reviewer (**cần có link**); comment @mention |
-| `docReview.setStatus` | `{ templateId, status, reason? }` | Authz = reviewer; `rejected` cần lý do |
-| `docReview.resubmit` | `{ templateId }` | Authz = owner; `round+1`; mention reviewer |
-
-**`item` trả về cho UI** gồm: `templateId, title, url, submitted, required, status, reviewerId/Name, addedById/Name, submittedById/Name, rejectReason, round`.
-
-**Validate (throw `Error` tiếng Việt):**
-- URL không `http(s)://` → "Link tài liệu phải bắt đầu bằng http:// hoặc https://"
-- Giao review khi chưa có link → "Vui lòng nộp link tài liệu trước khi giao review."
-- Thiếu reviewer → "Vui lòng chọn người review."
-- Sai quyền → "Chỉ <tên> mới được đổi trạng thái / đổi link..."
-- `rejected` không có lý do → "Vui lòng nhập lý do từ chối."
-
-### 9.3 Value function (`src/docField.js`)
-
-| Export | Vai trò |
-|---|---|
-| `value(payload)` | Handler Forge gọi khi render field; trả mảng giá trị theo `payload.issues` |
-| `computeIssueDocSummaries(issueIds)` | Logic batch trong `docReview.js` |
-| `computeIssueDocSummary(issueId)` | Wrapper 1 issue |
-
----
-
-## 10. Document Review Gate (`src/docWorkflow.js`)
-
-Workflow validator độc lập với checklist DOR/DOD. Chặn transition khi issue **rời** một status mà còn slot **Bắt buộc** chưa được duyệt.
-
-| Thành phần | Giá trị |
-|---|---|
-| Manifest module | `jira:workflowValidator` key `doc-review-gate-validator` |
-| Function | `validate-doc-gate` → `docWorkflow.validator` |
-| Logic đánh giá | `evaluateDocGateLeave(issueId, projectId, issueTypeName, leavingStatus)` trong `docReview.js` |
-| Thông báo | `buildDocGateErrorMessage(blocking, leavingStatus)` |
-
-**Quy tắc chặn:** slot `required === true` tại `(issueType, leavingStatus)` mà trạng thái `!== approved` (bao gồm **chưa nộp link**) → `{ result: false, errorMessage }`.
-
-**Status đang rời** lấy từ `event.transition.from.id` (qua `fetchStatusName`), fallback `issue.fields.status.name`.
-
-**Thiết lập (admin Jira):** vào cấu hình workflow → transition mong muốn → **Validators → Add → "VietGate Document Review Gate"**. Không gắn validator thì gate không kích hoạt (tài liệu vẫn review bình thường nhưng không chặn).
-
-> Lỗi đọc dữ liệu / thiếu context → validator trả `{ result: true }` (fail-open) để **không chặn nhầm** công việc.
-
----
-
-## 11. Đặc tả comment + mention (ADF)
-
-Mention node **bắt buộc** dùng `accountId`:
-
-```jsonc
-{ "type": "mention", "attrs": { "id": "<accountId>", "text": "@Tên" } }
-```
-
-- **assign / resubmit / submitLink (khi đã có reviewer)** → mention **reviewer** (kèm link tài liệu user nộp).
-- **setStatus = rejected** → mention **owner** + lý do.
-- **approved / in_review** → comment thường (không mention).
-- Comment lỗi: **log cảnh báo, KHÔNG throw** — lưu trạng thái vẫn thành công.
-
----
-
-## 12. Đặc tả Frontend (`static/doc-review/`)
-
-### 12.1 Custom UI (KHÔNG dùng UI Kit ở root)
-
-- React 18 + `@forge/bridge` (`invoke`, `view`, `events`).
-- **User search:** gõ tên/email → resolver backend `docReview.searchUsers` (preload danh sách khi query rỗng).
-- Chạy trong ngữ cảnh **custom field edit** (bấm ✏️).
-
-### 12.2 Hành vi UI (accordion)
-
-- Mount: `invoke('docReview.panel')` → danh sách slot theo status hiện tại.
-- Lắng nghe `JIRA_ISSUE_CHANGED` → refresh khi đổi status.
-- **Header:** thanh tiến độ + `X/Y đã duyệt · N từ chối · @ Status`.
-- **Nhóm (theo thứ tự):** 📎 Chưa nộp link → ⛔ Từ chối → ⏳ Cần xử lý → 🔍 Đang review → ✅ Đã duyệt. Mỗi nhóm có nhãn + số đếm.
-- **Mỗi slot = 1 dòng accordion** (chấm màu + tên + tag Bắt buộc + badge trạng thái). Bấm để bung; **chỉ 1 dòng mở** tại một thời điểm → gọn dù nhiều link.
-- **Dòng đã bung:**
-  - Chưa nộp → ô `LinkInput` để dán URL + nút "📎 Nộp link".
-  - Đã nộp → meta (reviewer / người nộp / vòng), lý do từ chối (nếu có), ô đổi link ("✏️ Đổi link"), ô chọn reviewer, hàng nút hành động (Mở tài liệu, Giao review, Đang review, Duyệt, Từ chối, Gửi lại).
-- Nút theo quyền: người nộp (đổi link), owner (giao / giao lại / gửi lại), reviewer (đổi status).
-- Nút **Đóng** → `view.submit(null)` → Jira tính lại value function.
-
-### 12.3 Mockup read view (custom field — luôn hiện)
-
-```text
-┌─ Document Review ──────────────────────────────────────────┐
-│ 📋 Review tài liệu   ▰▱▱▱▱  0/2 đã duyệt                   │
-│                                                            │
-│ 📎 Test Plan  •  Chưa nộp link  🔴 bắt buộc                │
-│ ⏳ Spec API  •  Chờ review · Nguyen Van A                  │
-└────────────────────────────────────────────────────────────┘
-  [✏️]  ← bấm để mở Custom UI edit (nộp link / giao reviewer / duyệt)
-```
-
----
-
-## 13. Custom Field — thiết lập một lần (admin Jira)
-
-Sau deploy + upgrade install, Jira admin cần:
-
-1. **Settings → Issues → Custom fields → Create custom field**
-2. Chọn type **VietGate Document Review** → đặt tên → **Create**
-3. Gắn field vào **screens** của project (Issue Type cần dùng — cả Create/Edit/View nếu muốn user nộp link ở nhiều màn hình)
-4. Kéo field lên **vị trí cao** trong screen layout (gần đầu Details) nếu muốn nổi bật
-
-> Không có bước này, field type tồn tại nhưng **không hiện** trên issue.
-
----
-
-## 14. Thay đổi `manifest.yml` (CHỈ THÊM)
-
-```yaml
-  jira:customFieldType:
-    - key: vietgate-doc-review
-      name: VietGate Document Review
-      description: Hiển thị các tài liệu cần review theo Issue Type + Status, kèm trạng thái duyệt.
-      type: object
-      icon: https://developer.atlassian.com/platform/forge/images/icons/issue-panel-icon.svg
-      resolver:
-        function: engine-resolver
-      view:
-        value:
-          function: doc-field-value
-        formatter:
-          expression: "value == null ? '—' : (value.text == null ? '—' : value.text)"
-      edit:
-        resource: doc-review-ui
-        experience:
-          - issue-view
-      schema:
-        properties:
-          text: { type: string }
-          count: { type: number }
-          approved: { type: number }
-
-  jira:workflowValidator:
-    # ... giữ nguyên compliance-gate-validator (checklist) ...
-    - key: doc-review-gate-validator
-      name: VietGate Document Review Gate
-      description: Chặn transition khi rời status mà còn tài liệu BẮT BUỘC chưa được duyệt.
-      function: validate-doc-gate
-      projectTypes: ['company-managed', 'team-managed']
-
-  function:
-    - key: doc-field-value
-      handler: docField.value
-    - key: validate-doc-gate          # tên ≤ 23 ký tự (Forge giới hạn)
-      handler: docWorkflow.validator
-
-resources:
-  - key: doc-review-ui
-    path: static/doc-review/build
-```
-
-**Lưu ý:**
-- `resolver` phải ở **cấp `jira:customFieldType`**, không đặt trong `edit`.
-- Key function `validate-doc-gate` phải **≤ 23 ký tự**.
-- **Permissions:** giữ nguyên — không thêm scope. Sau khi sửa module: `forge lint` + **redeploy + reinstall --upgrade**.
-
----
-
-## 15. Thay đổi `src/index.js` & `package.json`
-
-### `src/index.js` (THÊM 2 DÒNG)
-
-```js
-import { registerDocReviewResolvers } from './docReview';
-// ...
-registerDocReviewResolvers(resolver);
-```
-
-### `package.json` (root)
-
-```json
-{
-  "scripts": {
-    "build:ui": "npm run build --prefix static/admin && npm run build --prefix static/uim && npm run build --prefix static/doc-review",
-    "install:ui": "npm install --prefix static/admin && npm install --prefix static/uim && npm install --prefix static/doc-review"
-  },
-  "dependencies": {
-    "@forge/api": "...",
-    "@forge/resolver": "..."
-  }
-}
-```
-
-**Không** thêm `@forge/react` / `react` ở root.
-
-### Build Custom UI doc-review
+Các lệnh Forge CLI thường dùng (chạy tại thư mục gốc của app):
 
 ```bash
-npm run install:ui    # lần đầu hoặc sau khi đổi dependency
-npm run build:ui      # trước mỗi deploy
+# Cài dependency cho các giao diện (lần đầu hoặc khi đổi thư viện)
+npm run install:ui
 
-# Hoặc build riêng doc-review với bundle nhẹ:
-cd static/doc-review && GENERATE_SOURCEMAP=false INLINE_RUNTIME_CHUNK=false npx react-scripts build
-```
-
----
-
-## 16. Tiêu chí nghiệm thu (test checklist)
-
-**Hồi quy DOR/DOD (PHẢI PASS):**
-- [ ] Checklist vẫn chèn vào Description.
-- [ ] Workflow validator checklist vẫn chặn transition khi thiếu item bắt buộc.
-- [ ] Comment cảnh báo / hoàn thành vẫn hoạt động.
-- [ ] Project Settings DOR/DOD vẫn lưu được + section tài liệu hoạt động.
-
-**Tính năng mới:**
-- [ ] Admin thêm **nhiều slot** Task @ In Progress (có/không bắt buộc) trong Project Settings — lưu 1 lần.
-- [ ] Custom field đã tạo và gắn screen.
-- [ ] Mở issue Task @ In Progress → field **tự hiện** slot, slot chưa nộp ở nhóm "Chưa nộp link".
-- [ ] User dán link → nộp → slot chuyển sang "Chờ review".
-- [ ] Chưa nộp link thì **không** giao reviewer được (backend chặn).
-- [ ] Giao reviewer → comment @mention + notification.
-- [ ] Chỉ reviewer đổi được trạng thái; user khác bị backend chặn.
-- [ ] Người nộp đổi link được khi chưa duyệt; đang review → tự về pending.
-- [ ] Từ chối kèm lý do → owner được mention; "Gửi lại" → `round+1`, mention reviewer.
-- [ ] Gắn validator "Document Review Gate" → transition bị chặn khi slot bắt buộc **chưa nộp** hoặc **chưa duyệt**; thông báo ghi rõ.
-- [ ] Đổi status issue → field cập nhật (value function).
-
----
-
-## 17. Deploy & kiểm thử (Forge CLI)
-
-```bash
-cd /Users/td390vn/Checklist/Vietgate
+# Build toàn bộ giao diện (admin + uim + doc-review) trước khi deploy
 npm run build:ui
+
+# Kiểm tra manifest hợp lệ
 forge lint
+
+# Triển khai
 forge deploy --non-interactive -e production
-# Thêm/sửa customFieldType hoặc workflowValidator hoặc scope → cần upgrade install:
+
+# Nếu có thay đổi module/scope/manifest → cập nhật bản cài đặt
 forge install --non-interactive --upgrade --site <site>.atlassian.net --product jira --environment production
+
+# Xem log để gỡ lỗi
 forge logs -e production --since 15m
 ```
 
-Site hiện tại: `kvmon-dev.atlassian.net` · App ID: `f5be1cbb-5ac2-4f1e-950e-7328302ab175`
-
-> Chỉ đổi **code** (không đổi manifest) khi tunnelling → hot reload, không cần redeploy. Đổi **manifest** → redeploy (+reinstall nếu đổi module/scope).
+Khi dùng tunnel để phát triển: chỉ đổi **code** thì hot-reload, không cần deploy lại; đổi **manifest** thì phải deploy lại và khởi động lại tunnel.
 
 ---
 
-## 18. Tối ưu performance
+## Phụ lục kỹ thuật
 
-Value function chạy **mỗi lần xem issue** — đã tối ưu:
+> Phần này dành cho lập trình viên/agent bảo trì app. Nguyên tắc số 1: **không thay đổi hành vi DOR/DOD hiện có** — Document Review là module cộng thêm độc lập.
 
-| Kỹ thuật | Lợi ích |
+### Kiến trúc module (manifest)
+
+| Module | Key | Vai trò |
+|---|---|---|
+| `jira:projectSettingsPage` | `enterprise-checklist-admin-config` | Trang cấu hình DOR/DOD + ô tài liệu (Custom UI React) |
+| `jira:uiModifications` | `vietgate-description-checklists` | Chèn checklist vào Description |
+| `jira:workflowValidator` | `compliance-gate-validator` | Cổng chặn theo checklist |
+| `jira:workflowValidator` | `doc-review-gate-validator` | Cổng chặn theo tài liệu bắt buộc |
+| `jira:customFieldType` | `vietgate-doc-review` | Trường "Document Review" luôn hiển thị + giao diện chỉnh sửa |
+| `trigger` | created / updated | Comment cảnh báo / báo cáo hoàn thành |
+
+Trường tuỳ biến dùng **value function** (`docField.value`) để tính giá trị hiển thị mỗi lần xem issue và **formatter expression** để render chuỗi ở read view (không dùng React → luôn hiển thị, nhẹ). Giao diện chỉnh sửa là **Custom UI** (`static/doc-review/`). Lưu ý: value function chỉ được trả các thuộc tính khai báo trong `schema` (`text`, `count`, `approved`).
+
+### Vị trí file chính
+
+```
+src/
+  index.js          Đăng ký resolver + phân quyền admin các resolver cấu hình
+  engine.js         Logic checklist DOR/DOD (chuẩn hoá config, tính tiến độ, gate)
+  description.js    Bơm/parse task-list ADF trong Description
+  workflow.js       Validator checklist
+  gateLeaveCheck.js Đánh giá vi phạm khi rời cổng
+  completionComment.js / transitionWarning.js  Comment tự động
+  triggers.js       Xử lý sự kiện issue created/updated
+  metadata.js / projectMeta.js / instance.js   Metadata & runtime
+  uimRegistry.js / checklistPreview.js          Đăng ký UIM + preview
+  docReview.js      Resolver Document Review + value function + logic cổng tài liệu
+  docField.js       Handler value function cho custom field
+  docWorkflow.js    Validator cổng tài liệu
+  projectAuth.js    Helper assertProjectAdmin (kiểm tra quyền quản trị project)
+static/
+  admin/            Giao diện cấu hình DOR/DOD + ô tài liệu
+  uim/              Injector Description
+  doc-review/       Giao diện chỉnh sửa trường Document Review (accordion)
+```
+
+### Lưu trữ (Forge Key-Value Storage, gọi qua `.asApp()` ở backend)
+
+| Key | Nội dung |
 |---|---|
-| **`bulkfetch`** REST API | 1 request lấy context nhiều issue (chunk 100), thay vì N request |
-| **Cache template theo project** | Đọc `doc_tpl_*` 1 lần/project trong mỗi batch |
-| **Bỏ qua đọc review** | Issue không có slot khớp status → **không** đọc `doc_review_*` |
-| **Custom UI build** | `GENERATE_SOURCEMAP=false`, `INLINE_RUNTIME_CHUNK=false` → bundle nhẹ hơn |
+| `dor_dod_meta_<projectId>` | Trạng thái bật/tắt + metadata project |
+| `dor_dod_config_<projectId>` | Cấu hình checklist theo Issue Type |
+| `dor_dod_instance_<issueId>` | Snapshot checklist theo issue |
+| `doc_tpl_<projectId>` | Ô tài liệu (slot) theo Issue Type + Status |
+| `doc_review_<issueId>` | Link người dùng nộp + trạng thái review từng ô |
 
-Read view dùng **formatter expression** (Jira native) — không tải React → hiển thị nhanh nhất có thể.
+### Phân quyền (đã thực thi backend)
 
----
+- Resolver cấu hình (`docTemplate.*`, `getProjectConfigs`, `setProjectEnabled`, `saveProjectConfig`, `deleteProjectConfig`, `getProjectIssueTypes`, `getProjectStatuses`) gọi `assertProjectAdmin(req)` — kiểm tra `ADMINISTER_PROJECTS` hoặc `ADMINISTER` qua `mypermissions` bằng `.asUser()`.
+- Resolver thao tác issue (`docReview.submitLink/assign/setStatus/resubmit`) thực thi luật vai trò người nộp / chủ / người review.
 
-## 19. Ràng buộc Forge cần nhớ
+### Quét chất lượng mã (SonarQube)
 
-- App chỉ có **một** custom field tĩnh — không tạo động nhiều field; "screen nào" do admin gắn field qua Jira.
-- Custom field **view** không hỗ trợ Custom UI — chỉ UI Kit hoặc **formatter/value function**. Ta chọn value function + formatter để tránh xung đột React.
-- Value function **chỉ** được trả thuộc tính khai báo trong `schema` (`text/count/approved`); thuộc tính lạ → mất cả giá trị.
-- Custom field **edit** hỗ trợ Custom UI — dùng `static/doc-review/`.
-- `resolver` của `jira:customFieldType` khai báo ở **cấp module**.
-- Key `function` của workflow validator **≤ 23 ký tự**.
-- Storage KV chỉ gọi backend `.asApp()`.
-- Không thêm scope ngoài manifest hiện có.
-- `forge lint` sau mỗi lần sửa manifest.
+File `sonar-project.properties` đã giới hạn `sonar.sources` vào mã nguồn thật và loại trừ `build/`, `node_modules/`, `*.min.js`, `*.map`, `.forge/` để tránh nhiễu.
 
----
+### Ràng buộc Forge cần nhớ
 
-## 20. Tài liệu Forge tham chiếu
+- App chỉ có **một** custom field tĩnh — không tạo động nhiều field; "hiển thị ở screen nào" do admin gắn qua Jira.
+- Custom field **view** không hỗ trợ Custom UI → dùng value function + formatter.
+- `resolver` của `jira:customFieldType` phải khai báo ở **cấp module** (không đặt trong `edit`).
+- Key của `function` workflow validator **≤ 23 ký tự** (vd: `validate-doc-gate`).
+- Storage KV chỉ gọi từ backend bằng `.asApp()`.
+- Chạy `forge lint` sau mỗi lần sửa manifest.
 
-- [Jira custom field type](https://developer.atlassian.com/platform/forge/manifest-reference/modules/jira-custom-field-type/) — value function, formatter, edit Custom UI
-- [Jira workflow validator](https://developer.atlassian.com/platform/forge/manifest-reference/modules/jira-workflow-validator/)
-- [Issue bulkfetch API](https://developer.atlassian.com/cloud/jira/platform/rest/v3/api-group-issues/#api-rest-api-3-issue-bulkfetch-post)
-- [User search API](https://developer.atlassian.com/cloud/jira/platform/rest/v3/api-group-user-search/)
-- ADF mention node — `{ type: 'mention', attrs: { id, text } }`
-- Issue comment REST v3 — `POST /rest/api/3/issue/{id}/comment`
+### Hướng mở rộng (ngoài phạm vi hiện tại)
 
----
-
-## 21. Phạm vi & hướng mở rộng
-
-**Trong phạm vi:** admin khai báo slot tài liệu (tên + bắt buộc) theo status, user nộp link trên issue, hiển thị luôn qua custom field, giao reviewer, 4 trạng thái + "chưa nộp link", mention, vòng rework, gate chặn transition.
-
-**Ngoài phạm vi (tương lai):**
-- Tự tạo custom field + gắn screen qua API khi admin bật VietGate (bỏ bước thủ công).
-- Đa reviewer / phê duyệt nhiều cấp.
-- Đính kèm file trực tiếp (thay vì link).
-- Nhắc nhở tự động khi slot bắt buộc quá hạn chưa nộp.
-
-> **Lặp lại nguyên tắc số 1:** không chạm vào logic DOR/DOD. Khi có điểm chưa rõ về nghiệp vụ → hỏi lại người dùng trước khi tự quyết.
+- Tự tạo custom field + gắn screen qua API khi bật VietGate (bỏ bước thủ công).
+- Đa người review / phê duyệt nhiều cấp.
+- Đính kèm file trực tiếp thay vì link.
+- Nhắc nhở tự động khi tài liệu bắt buộc quá hạn chưa nộp.

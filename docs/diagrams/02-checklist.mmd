@@ -1,0 +1,11 @@
+flowchart TD
+    A([Mở issue]) --> B[Thấy checklist<br/>ngay trong phần Mô tả]
+    B --> C[Tick các việc đã xong<br/>· việc bắt buộc tô đỏ kèm *]
+    C --> D{Kéo sang<br/>trạng thái mốc}
+    D -->|Việc bắt buộc đã tick đủ| E([Chuyển thành công])
+    D -->|Còn việc bắt buộc chưa tick| F[Popup chặn lại,<br/>liệt kê việc còn thiếu]
+    F --> C
+
+    style E fill:#d1fae5,stroke:#065f46
+    style F fill:#fee2e2,stroke:#991b1b
+    style A fill:#e0e7ff,stroke:#3730a3

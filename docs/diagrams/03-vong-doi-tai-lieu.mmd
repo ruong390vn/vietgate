@@ -1,0 +1,12 @@
+flowchart TD
+    A[Chưa nộp link<br/>admin đã tạo ô] -->|Người làm dán link| B[Chờ review]
+    B -->|Chọn và giao người review| C[Đang review]
+    C -->|Người review đồng ý| D[Đã duyệt]
+    C -->|Người review từ chối<br/>+ ghi lý do| E[Từ chối]
+    E -->|Sửa xong, gửi lại<br/>vòng kế tiếp| B
+
+    style A fill:#f1f5f9,stroke:#475569
+    style B fill:#fef3c7,stroke:#b45309
+    style C fill:#dbeafe,stroke:#1d4ed8
+    style D fill:#d1fae5,stroke:#065f46
+    style E fill:#fee2e2,stroke:#991b1b

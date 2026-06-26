@@ -1,0 +1,21 @@
+flowchart LR
+    subgraph ADMIN[Quản trị viên project · làm một lần]
+        A1[Bật VietGate]
+        A2[Tạo checklist DOR/DOD]
+        A3[Khai báo ô tài liệu cần nộp]
+        A4[Gắn trường và cổng chặn]
+    end
+    subgraph USER[Người dùng · hằng ngày]
+        U1[Tick checklist trong Mô tả]
+        U2[Nộp link tài liệu]
+        U3[Giao người review]
+    end
+    subgraph REVIEWER[Người review]
+        R1[Xem tài liệu]
+        R2[Duyệt hoặc Từ chối + lý do]
+    end
+    ADMIN ==> USER ==> REVIEWER
+
+    style ADMIN fill:#eef2ff,stroke:#3730a3
+    style USER fill:#ecfeff,stroke:#0e7490
+    style REVIEWER fill:#f0fdf4,stroke:#065f46
