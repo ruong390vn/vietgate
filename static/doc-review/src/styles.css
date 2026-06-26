@@ -1,0 +1,169 @@
+:root {
+  --primary: #4f46e5;
+  --success: #10b981;
+  --warning: #f59e0b;
+  --danger: #ef4444;
+  --text: #0f172a;
+  --muted: #64748b;
+  --border: #e2e8f0;
+  --bg: #f8fafc;
+  --radius: 10px;
+  --font: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+body { font-family: var(--font); color: var(--text); background: var(--bg); font-size: 13px; }
+
+.vg-app { padding: 12px; }
+
+.vg-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; }
+.vg-head h2 { font-size: 15px; font-weight: 700; }
+.vg-status-line { font-size: 12px; color: var(--muted); margin-bottom: 10px; }
+
+.vg-badge {
+  display: inline-block; padding: 3px 8px; border-radius: 99px;
+  font-size: 11px; font-weight: 600;
+}
+.vg-badge--default { background: #f1f5f9; color: #475569; }
+.vg-badge--progress { background: #dbeafe; color: #1d4ed8; }
+.vg-badge--success { background: #d1fae5; color: #065f46; }
+.vg-badge--danger { background: #fee2e2; color: #991b1b; }
+.vg-badge--summary { background: #ede9fe; color: #5b21b6; }
+
+/* Thanh tiến độ tổng quan ở đầu panel */
+.vg-summary { margin-bottom: 12px; }
+.vg-summary-top {
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  font-size: 11.5px; margin-bottom: 5px;
+}
+.vg-summary-count { font-weight: 700; color: var(--text); }
+.vg-summary-rej { color: #b45309; font-weight: 600; }
+.vg-summary-status { color: var(--muted); margin-left: auto; }
+.vg-summary-bar {
+  height: 6px; border-radius: 99px; background: #eef2f7; overflow: hidden;
+}
+.vg-summary-fill {
+  height: 100%; border-radius: 99px; background: var(--success);
+  transition: width 0.3s ease;
+}
+
+.vg-group { margin-bottom: 10px; }
+.vg-section-title {
+  font-size: 11px; font-weight: 700; text-transform: uppercase;
+  letter-spacing: 0.06em; color: var(--muted); margin: 10px 0 5px;
+}
+.vg-rows {
+  border: 1px solid var(--border); border-radius: var(--radius);
+  overflow: hidden; background: #fff;
+}
+
+/* Mỗi link là một dòng accordion gọn */
+.vg-row { border-bottom: 1px solid var(--border); }
+.vg-row:last-child { border-bottom: none; }
+.vg-row.is-open { background: #f8fafc; }
+
+.vg-row-head {
+  display: flex; align-items: center; gap: 8px; width: 100%;
+  padding: 9px 12px; background: none; border: none; cursor: pointer;
+  text-align: left; font: inherit; transition: background 0.12s;
+}
+.vg-row-head:hover { background: #f1f5f9; }
+.vg-dot { flex: 0 0 auto; width: 8px; height: 8px; border-radius: 50%; background: #cbd5e1; }
+.vg-dot--unsubmitted { background: #94a3b8; }
+.vg-dot--pending { background: #f59e0b; }
+.vg-dot--in_review { background: #3b82f6; }
+.vg-dot--approved { background: #10b981; }
+.vg-dot--rejected { background: #ef4444; }
+.vg-row-name {
+  flex: 1 1 auto; min-width: 0; font-weight: 600; font-size: 12.5px;
+  color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.vg-row-badge { flex: 0 0 auto; }
+.vg-tag {
+  flex: 0 0 auto; padding: 2px 7px; border-radius: 99px;
+  font-size: 10px; font-weight: 700;
+}
+.vg-tag--req { background: #fee2e2; color: #991b1b; }
+.vg-chevron { flex: 0 0 auto; color: var(--muted); font-size: 11px; width: 12px; text-align: center; }
+
+.vg-row-body {
+  padding: 0 12px 12px; border-top: 1px solid #eef2f7;
+}
+.vg-row-body .vg-card-meta { font-size: 11px; color: var(--muted); margin: 8px 0; }
+
+/* Khu chọn reviewer */
+.vg-assign { margin-bottom: 8px; }
+
+/* Ô user dán link tài liệu để nộp */
+.vg-link-input { display: flex; gap: 6px; align-items: center; margin: 6px 0 2px; }
+.vg-link-input .vg-input { flex: 1; margin-bottom: 0; }
+.vg-link-input .vg-btn { flex: 0 0 auto; }
+
+/* Một hàng hành động: nút mở tài liệu + nút theo ngữ cảnh, tự xuống dòng khi hẹp */
+.vg-actions {
+  display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-top: 4px;
+}
+.vg-actions .vg-btn { text-decoration: none; }
+
+.vg-reason {
+  background: #fef2f2; border: 1px solid #fecaca; border-radius: 6px;
+  padding: 8px; font-size: 12px; color: #991b1b; margin-bottom: 8px;
+}
+
+.vg-btn-row { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+.vg-btn {
+  display: inline-flex; align-items: center; justify-content: center;
+  padding: 6px 12px; border-radius: 6px; font-size: 12px; font-weight: 600;
+  cursor: pointer; border: none; transition: opacity 0.15s, background 0.15s;
+  line-height: 1.2; white-space: nowrap;
+}
+.vg-btn--sm { padding: 5px 10px; font-size: 11.5px; }
+.vg-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+.vg-btn--primary { background: var(--primary); color: #fff; }
+.vg-btn--success { background: var(--success); color: #fff; }
+.vg-btn--warning { background: var(--warning); color: #fff; }
+.vg-btn--ghost { background: #fff; border: 1px solid var(--border); color: var(--text); }
+.vg-btn--danger { background: var(--danger); color: #fff; }
+
+.vg-input, .vg-select {
+  width: 100%; padding: 8px 10px; border: 1px solid var(--border);
+  border-radius: 6px; font-size: 12px; margin-bottom: 6px;
+}
+.vg-label { font-size: 11px; font-weight: 600; color: var(--muted); margin-bottom: 4px; display: block; }
+
+.vg-user-row { display: flex; gap: 6px; align-items: flex-end; margin-top: 6px; }
+.vg-user-row .vg-input { flex: 1; margin-bottom: 0; }
+
+.vg-alert { padding: 10px; border-radius: 6px; font-size: 12px; margin-bottom: 10px; }
+.vg-alert--error { background: #fef2f2; color: #991b1b; border: 1px solid #fecaca; }
+.vg-alert--info { background: #eff6ff; color: #1e40af; border: 1px solid #bfdbfe; }
+
+.vg-loading { display: flex; align-items: center; gap: 8px; padding: 16px; color: var(--muted); }
+.vg-spinner {
+  width: 18px; height: 18px; border: 2px solid var(--border);
+  border-top-color: var(--primary); border-radius: 50%;
+  animation: spin 0.7s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+
+.vg-overlay {
+  position: fixed; inset: 0; background: rgba(15,23,42,0.45);
+  display: flex; align-items: center; justify-content: center; z-index: 100;
+}
+.vg-modal {
+  background: #fff; border-radius: 12px; padding: 20px; width: 90%; max-width: 400px;
+  box-shadow: 0 20px 60px rgba(0,0,0,0.2);
+}
+.vg-modal h3 { font-size: 15px; margin-bottom: 10px; }
+.vg-modal-foot { display: flex; justify-content: flex-end; gap: 8px; margin-top: 14px; }
+
+.vg-user-suggest {
+  border: 1px solid var(--border); border-radius: 6px; background: #fff;
+  max-height: 120px; overflow-y: auto; margin-bottom: 6px;
+}
+.vg-user-suggest button {
+  display: block; width: 100%; text-align: left; padding: 8px 10px;
+  border: none; background: none; cursor: pointer; font-size: 12px;
+}
+.vg-user-suggest button:hover { background: #f1f5f9; }
