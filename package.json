@@ -1,0 +1,15 @@
+{
+  "name": "vietgate-enterprise-checklist",
+  "version": "4.29.0",
+  "main": "index.js",
+  "license": "MIT",
+  "private": true,
+  "scripts": {
+    "build:ui": "npm run build --prefix static/admin && npm run build --prefix static/uim && npm run build --prefix static/doc-review",
+    "install:ui": "npm install --prefix static/admin && npm install --prefix static/uim && npm install --prefix static/doc-review"
+  },
+  "dependencies": {
+    "@forge/api": "7.2.2-next.1",
+    "@forge/resolver": "1.8.0"
+  }
+}

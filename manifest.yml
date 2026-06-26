@@ -1,0 +1,104 @@
+modules:
+  jira:uiModifications:
+    - key: vietgate-description-checklists
+      title: VietGate DOR/DOD Description
+      resource: uim-ui
+      resolver:
+        function: engine-resolver
+
+  jira:projectSettingsPage:
+    - key: enterprise-checklist-admin-config
+      resource: admin-ui
+      resolver:
+        function: engine-resolver
+      title: DOR / DOD Configuration
+
+  jira:customFieldType:
+    - key: vietgate-doc-review
+      name: VietGate Document Review
+      description: Hiển thị các tài liệu cần review theo Issue Type + Status, kèm trạng thái duyệt. Bấm để giao reviewer / duyệt / từ chối.
+      type: object
+      icon: https://developer.atlassian.com/platform/forge/images/icons/issue-panel-icon.svg
+      resolver:
+        function: engine-resolver
+      view:
+        # Giá trị field được tính lại mỗi lần xem issue (luôn tươi, không cần bấm).
+        value:
+          function: doc-field-value
+        # Formatter biến object thành chuỗi luôn hiển thị trong khu vực field.
+        formatter:
+          expression: "value == null ? '—' : (value.text == null ? '—' : value.text)"
+      edit:
+        # Trải nghiệm chỉnh sửa dùng Custom UI (giao reviewer, duyệt, từ chối, mention).
+        resource: doc-review-ui
+        experience:
+          - issue-view
+      schema:
+        properties:
+          text:
+            type: string
+          count:
+            type: number
+          approved:
+            type: number
+
+  jira:workflowValidator:
+    - key: compliance-gate-validator
+      name: VietGate DOR/DOD Checklist
+      description: Chặn transition khi rời status mà checklist bắt buộc chưa hoàn thành. Hiển thị popup nhắc tick item trong Description.
+      function: validate-gate-workflow
+      projectTypes: ['company-managed', 'team-managed']
+    - key: doc-review-gate-validator
+      name: VietGate Document Review Gate
+      description: Chặn transition khi rời status mà còn tài liệu BẮT BUỘC chưa được duyệt.
+      function: validate-doc-gate
+      projectTypes: ['company-managed', 'team-managed']
+
+  trigger:
+    - key: jira-issue-created-trigger
+      events:
+        - avi:jira:created:issue
+      function: issue-created-trigger
+    - key: jira-issue-updated-trigger
+      events:
+        - avi:jira:updated:issue
+      function: issue-updated-trigger
+
+  function:
+    - key: engine-resolver
+      handler: index.handler
+    - key: doc-field-value
+      handler: docField.value
+    - key: validate-gate-workflow
+      handler: workflow.validator
+    - key: validate-doc-gate
+      handler: docWorkflow.validator
+    - key: issue-created-trigger
+      handler: triggers.onIssueCreated
+    - key: issue-updated-trigger
+      handler: triggers.onIssueUpdated
+
+resources:
+  - key: admin-ui
+    path: static/admin/build
+  - key: uim-ui
+    path: static/uim/build
+  - key: doc-review-ui
+    path: static/doc-review/build
+
+permissions:
+  scopes:
+    - read:jira-work
+    - read:jira-user
+    - write:jira-work
+    - write:issue:jira
+    - manage:jira-configuration
+    - manage:jira-project
+    - storage:app
+
+app:
+  runtime:
+    name: nodejs24.x
+    memoryMB: 512
+    architecture: arm64
+  id: ari:cloud:ecosystem::app/f5be1cbb-5ac2-4f1e-950e-7328302ab175
